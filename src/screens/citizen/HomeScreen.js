@@ -10,24 +10,23 @@
  * - Notification badge count
  * 
  * Data Sources:
- * - Firestore 'tasks' collection for task data
- * - Firestore 'notifications' collection for unread count
+ * - Supabase 'tasks' table for task data
+ * - Supabase 'notifications' table for unread count
  * - AuthContext for user profile information
  */
 
 import { Ionicons } from '@expo/vector-icons';
-import { collection, limit, onSnapshot, orderBy, query, where } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Image, RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Image, RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
 
@@ -48,62 +47,82 @@ export default function HomeScreen({ navigation }) {
   const [unreadCount, setUnreadCount] = useState(0);          // Unread notification count
 
   /**
-   * Fetch all data needed for the dashboard
-   * This includes recent tasks, statistics, and notification count
+   * Fetch recent tasks (last 5) and overall stats, then keep them live
+   * via a Supabase realtime channel on the 'tasks' table.
    */
-  useEffect(() => {
-    // recent tasks (limit 5)
-    const recentQ = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'), limit(5));
-    const unsubRecent = onSnapshot(recentQ, (snap) => {
-      const tasks = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setRecentTasks(tasks);
-      setLoading(false);
-      setRefreshing(false);
-    }, (err) => {
-      console.error('Recent tasks listener error:', err);
-      setLoading(false);
-      setRefreshing(false);
-    });
+  const fetchTasksData = async () => {
+    const { data: recent, error: recentError } = await supabase
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(5);
+    if (recentError) console.error('Recent tasks fetch error:', recentError);
+    else setRecentTasks(recent || []);
 
-    // all tasks for stats
-    const allQ = query(collection(db, 'tasks'));
-    const unsubAll = onSnapshot(allQ, (snap) => {
-      const all = snap.docs.map(d => d.data());
+    const { data: all, error: allError } = await supabase.from('tasks').select('status');
+    if (allError) {
+      console.error('All tasks fetch error:', allError);
+    } else {
       setStats({
         total: all.length,
         open: all.filter(t => t.status === 'open').length,
         inProgress: all.filter(t => t.status === 'in-progress').length,
         done: all.filter(t => t.status === 'done').length,
       });
-    }, (err) => {
-      console.error('All tasks listener error:', err);
-    });
-
-    // notifications count (one-time fetch is fine, keep as-is for now)
-    let unsubNotifs = null;
-    if (user?.uid) {
-      const notifQ = query(
-        collection(db, 'notifications'),
-        where('userId', '==', user.uid),
-        where('read', '==', false)
-      );
-      unsubNotifs = onSnapshot(notifQ, (snap) => setUnreadCount(snap.size), (err) => console.error(err));
     }
 
-    return () => {
-      unsubRecent();
-      unsubAll();
-      if (unsubNotifs) unsubNotifs();
+    setLoading(false);
+    setRefreshing(false);
+  };
+
+  useEffect(() => {
+    fetchTasksData();
+
+    const tasksChannel = supabase
+      .channel('home-tasks')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, fetchTasksData)
+      .subscribe();
+
+    return () => supabase.removeChannel(tasksChannel);
+  }, []);
+
+  /**
+   * Fetch and keep live the count of this user's unread notifications.
+   */
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const fetchUnread = async () => {
+      const { count, error } = await supabase
+        .from('notifications')
+        .select('*', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('read', false);
+      if (error) console.error('Unread notifications error:', error);
+      else setUnreadCount(count || 0);
     };
-  }, [user]);
+
+    fetchUnread();
+
+    const notifChannel = supabase
+      .channel(`home-notifs-${user.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications', filter: `user_id=eq.${user.id}` },
+        fetchUnread
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(notifChannel);
+  }, [user?.id]);
 
   /**
    * Handle pull-to-refresh gesture
    * Called when user pulls down on the scroll view
    */
-  const onRefresh = () => { 
-    setRefreshing(true); 
-    fetchData(); 
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchTasksData();
   };
 
   /**
@@ -168,7 +187,7 @@ export default function HomeScreen({ navigation }) {
       {/* Header */}
       <View style={styles.header}>
         <View>
-          <Text style={styles.greeting}>Muraho, {userProfile?.fullName?.split(' ')[0]}</Text>
+          <Text style={styles.greeting}>Muraho, {userProfile?.full_name?.split(' ')[0]}</Text>
           <Text style={styles.subGreeting}>{userProfile?.sector} Sector</Text>
         </View>
         <TouchableOpacity style={styles.notifBtn} onPress={() => navigation.navigate('Notifications')}>
@@ -281,7 +300,7 @@ export default function HomeScreen({ navigation }) {
                 <Text style={styles.taskCategory}>{task.category}</Text>
               </View>
             </View>
-            {task.needsGovernment && (
+            {task.needs_government && (
               <View style={styles.govBadge}>
                 <Ionicons name="business" size={14} color={colors.warning} />
               </View>

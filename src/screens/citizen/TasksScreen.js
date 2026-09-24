@@ -1,19 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    Image,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  FlatList,
+  Image,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
 
@@ -44,21 +43,31 @@ export default function TasksScreen({ navigation }) {
   const [search, setSearch]         = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
 
-  useEffect(() => {
-    const q = query(collection(db, 'tasks'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setTasks(data);
-      setFiltered(data);
-      setLoading(false);
-      setRefreshing(false);
-    }, (err) => {
-      console.error('Tasks listener error:', err);
-      setLoading(false);
-      setRefreshing(false);
-    });
+  const fetchTasks = async () => {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-    return () => unsub();
+    if (error) {
+      console.error('Tasks fetch error:', error);
+    } else {
+      setTasks(data || []);
+      setFiltered(data || []);
+    }
+    setLoading(false);
+    setRefreshing(false);
+  };
+
+  useEffect(() => {
+    fetchTasks();
+
+    const channel = supabase
+      .channel('tasks-list')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'tasks' }, fetchTasks)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   useEffect(() => {
@@ -76,7 +85,7 @@ export default function TasksScreen({ navigation }) {
   // ── Task card ──────────────────────────────────────────────
   const renderTask = ({ item }) => {
     const status   = STATUS_CONFIG[item.status] || STATUS_CONFIG['open'];
-    const isJoined = item.participants?.includes(user?.uid);
+    const isJoined = item.participants?.includes(user?.id);
     const imgUrl   = item.media?.[0]?.url;
     const extra    = (item.media?.length || 0) - 1;
 
@@ -104,7 +113,7 @@ export default function TasksScreen({ navigation }) {
           </View>
 
           {/* Gov — top right */}
-          {item.needsGovernment && (
+          {item.needs_government && (
             <View style={styles.govPill}>
               <Ionicons name="business-outline" size={11} color={colors.warning} />
               <Text style={styles.govPillText}>Gov. Required</Text>
@@ -136,7 +145,7 @@ export default function TasksScreen({ navigation }) {
 
           <Text style={styles.cardDesc} numberOfLines={2}>{item.description}</Text>
 
-          {item.needsMaterials && item.materials?.length > 0 && (
+          {item.needs_materials && item.materials?.length > 0 && (
             <View style={styles.materialsRow}>
               <Ionicons name="construct-outline" size={12} color={colors.mediumGray} />
               <Text style={styles.materialsText} numberOfLines={1}>

@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
+import { decode } from 'base64-arraybuffer';
+import * as FileSystem from 'expo-file-system';
 import * as ImagePicker from 'expo-image-picker';
-import { doc, onSnapshot, updateDoc } from 'firebase/firestore';
-import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -16,7 +16,7 @@ import {
   TouchableOpacity,
   View
 } from 'react-native';
-import { db, storage } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
 
@@ -26,31 +26,10 @@ export default function ProfileScreen({ navigation }) {
   const [editModal, setEditModal] = useState(false);
   const [uploadingPic, setUploadingPic] = useState(false);
   const [editForm, setEditForm] = useState({
-    fullName: userProfile?.fullName || '',
+    fullName: userProfile?.full_name || '',
     phone: userProfile?.phone || '',
     sector: userProfile?.sector || '',
   });
-
-  // Listen for notifications from Firestore
-  useEffect(() => {
-    if (!user) return;
-
-    // Subscribe to notifications collection for this user
-    const notificationsRef = doc(db, 'notifications', user.uid);
-    
-    const unsubscribe = onSnapshot(notificationsRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        // You can handle real-time notifications here
-        console.log('Notification update:', data);
-        // Could show an alert or update a badge count
-      }
-    }, (error) => {
-      console.error('Notification listener error:', error);
-    });
-
-    return () => unsubscribe();
-  }, [user]);
 
   const handlePickImage = async () => {
     console.log('handlePickImage called');
@@ -81,18 +60,24 @@ export default function ProfileScreen({ navigation }) {
   const uploadProfilePicture = async (uri) => {
     setUploadingPic(true);
     try {
-      const response = await fetch(uri);
-      const blob = await response.blob();
-      const filename = `profile_${user.uid}_${Date.now()}.jpg`;
-      const storageRef = ref(storage, `profile-pictures/${filename}`);
-      
-      await uploadBytes(storageRef, blob);
-      const downloadURL = await getDownloadURL(storageRef);
+      const filename = `profile_${user.id}_${Date.now()}.jpg`;
 
-      // Update user profile in Firestore
-      await updateDoc(doc(db, 'users', user.uid), {
-        profilePicture: downloadURL,
+      const base64 = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64,
       });
+
+      const { error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filename, decode(base64), { contentType: 'image/jpeg', upsert: true });
+      if (uploadError) throw uploadError;
+
+      const { data } = supabase.storage.from('avatars').getPublicUrl(filename);
+
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ profile_picture: data.publicUrl })
+        .eq('id', user.id);
+      if (updateError) throw updateError;
 
       Alert.alert('Success', 'Profile picture updated!');
     } catch (error) {
@@ -105,7 +90,7 @@ export default function ProfileScreen({ navigation }) {
 
   const handleEditProfile = () => {
     setEditForm({
-      fullName: userProfile?.fullName || '',
+      fullName: userProfile?.full_name || '',
       phone: userProfile?.phone || '',
       sector: userProfile?.sector || '',
     });
@@ -118,11 +103,15 @@ export default function ProfileScreen({ navigation }) {
     }
 
     try {
-      await updateDoc(doc(db, 'users', user.uid), {
-        fullName: editForm.fullName.trim(),
-        phone: editForm.phone.trim(),
-        sector: editForm.sector.trim(),
-      });
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          full_name: editForm.fullName.trim(),
+          phone: editForm.phone.trim(),
+          sector: editForm.sector.trim(),
+        })
+        .eq('id', user.id);
+      if (error) throw error;
 
       Alert.alert('Success', 'Profile updated!');
       setEditModal(false);
@@ -171,7 +160,7 @@ export default function ProfileScreen({ navigation }) {
       section: 'Account',
       items: [
         { icon: 'create', label: 'Edit Profile', color: colors.primary, action: handleEditProfile },
-        { icon: 'person', label: 'Full Name', value: userProfile?.fullName, color: colors.primary },
+        { icon: 'person', label: 'Full Name', value: userProfile?.full_name, color: colors.primary },
         { icon: 'mail', label: 'Email', value: user?.email, color: colors.primary },
         { icon: 'call', label: 'Phone', value: userProfile?.phone, color: colors.primary },
         { icon: 'location', label: 'Sector', value: userProfile?.sector, color: colors.primary },
@@ -210,12 +199,12 @@ export default function ProfileScreen({ navigation }) {
           disabled={uploadingPic}
           activeOpacity={0.7}
         >
-          {userProfile?.profilePicture ? (
-            <Image source={{ uri: userProfile.profilePicture }} style={styles.avatarImage} />
+          {userProfile?.profile_picture ? (
+            <Image source={{ uri: userProfile.profile_picture }} style={styles.avatarImage} />
           ) : (
             <View style={[styles.avatar, { backgroundColor: getRoleColor() }]}>
               <Text style={styles.avatarText}>
-                {userProfile?.fullName?.charAt(0)?.toUpperCase() || 'U'}
+                {userProfile?.full_name?.charAt(0)?.toUpperCase() || 'U'}
               </Text>
             </View>
           )}
@@ -229,7 +218,7 @@ export default function ProfileScreen({ navigation }) {
             </View>
           )}
         </TouchableOpacity>
-        <Text style={styles.userName}>{userProfile?.fullName}</Text>
+        <Text style={styles.userName}>{userProfile?.full_name}</Text>
         <Text style={styles.userEmail}>{user?.email}</Text>
         <View style={[styles.rolePill, { backgroundColor: getRoleColor() + '25' }]}>
           <Ionicons name={getRoleIcon()} size={14} color={getRoleColor()} />

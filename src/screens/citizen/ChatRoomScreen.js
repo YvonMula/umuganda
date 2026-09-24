@@ -1,26 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
-import {
-    addDoc,
-    collection,
-    doc,
-    onSnapshot,
-    orderBy,
-    query,
-    serverTimestamp,
-    updateDoc
-} from 'firebase/firestore';
 import { useEffect, useRef, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    KeyboardAvoidingView, Platform,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  FlatList,
+  KeyboardAvoidingView, Platform,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
 
@@ -34,17 +24,32 @@ export default function ChatRoomScreen({ route, navigation }) {
   const flatListRef = useRef(null);
 
   useEffect(() => {
-    const q = query(
-      collection(db, 'rooms', room.id, 'messages'),
-      orderBy('createdAt', 'asc')
-    );
-    const unsub = onSnapshot(q, (snap) => {
-      const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setMessages(msgs);
+    const fetchMessages = async () => {
+      const { data, error } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('room_id', room.id)
+        .order('created_at', { ascending: true });
+      if (!error) setMessages(data || []);
       setLoading(false);
       setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
-    });
-    return unsub;
+    };
+
+    fetchMessages();
+
+    const channel = supabase
+      .channel(`chat-room-${room.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'messages', filter: `room_id=eq.${room.id}` },
+        (payload) => {
+          setMessages((prev) => [...prev, payload.new]);
+          setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, [room.id]);
 
   const sendMessage = async () => {
@@ -53,17 +58,20 @@ export default function ChatRoomScreen({ route, navigation }) {
     setText('');
     setSending(true);
     try {
-      await addDoc(collection(db, 'rooms', room.id, 'messages'), {
+      const { error: msgError } = await supabase.from('messages').insert({
+        room_id: room.id,
         text: msgText,
-        senderId: user.uid,
-        senderName: userProfile?.fullName || 'Anonymous',
-        senderSector: userProfile?.sector || '',
-        createdAt: serverTimestamp(),
+        sender_id: user.id,
+        sender_name: userProfile?.full_name || 'Anonymous',
+        sender_sector: userProfile?.sector || '',
       });
-      await updateDoc(doc(db, 'rooms', room.id), {
-        lastMessage: msgText,
-        lastMessageAt: serverTimestamp(),
-      });
+      if (msgError) throw msgError;
+
+      const { error: roomError } = await supabase
+        .from('rooms')
+        .update({ last_message: msgText, last_message_at: new Date().toISOString() })
+        .eq('id', room.id);
+      if (roomError) throw roomError;
     } catch (err) {
       console.error(err);
     } finally {
@@ -78,26 +86,26 @@ export default function ChatRoomScreen({ route, navigation }) {
   };
 
   const renderMessage = ({ item, index }) => {
-    const isMe = item.senderId === user.uid;
+    const isMe = item.sender_id === user.id;
     const prevMsg = messages[index - 1];
-    const showName = !isMe && (!prevMsg || prevMsg.senderId !== item.senderId);
+    const showName = !isMe && (!prevMsg || prevMsg.sender_id !== item.sender_id);
 
     return (
       <View style={[styles.msgRow, isMe ? styles.msgRowMe : styles.msgRowThem]}>
         {!isMe && (
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>
-              {item.senderName?.charAt(0)?.toUpperCase() || '?'}
+              {item.sender_name?.charAt(0)?.toUpperCase() || '?'}
             </Text>
           </View>
         )}
         <View style={[styles.bubble, isMe ? styles.bubbleMe : styles.bubbleThem]}>
           {showName && (
-            <Text style={styles.senderName}>{item.senderName}</Text>
+            <Text style={styles.senderName}>{item.sender_name}</Text>
           )}
           <Text style={[styles.msgText, isMe && styles.msgTextMe]}>{item.text}</Text>
           <Text style={[styles.msgTime, isMe && styles.msgTimeMe]}>
-            {formatTime(item.createdAt)}
+            {formatTime(item.created_at)}
           </Text>
         </View>
       </View>

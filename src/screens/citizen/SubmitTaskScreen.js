@@ -1,17 +1,16 @@
 import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Location from 'expo-location';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { useState } from 'react';
 import {
-    ActivityIndicator, Alert, Image, Platform,
-    ScrollView, StyleSheet, Switch,
-    Text, TextInput, TouchableOpacity, View,
+  ActivityIndicator, Alert, Image, Platform,
+  ScrollView, StyleSheet, Switch,
+  Text, TextInput, TouchableOpacity, View,
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
-import { uploadMediaToCloudinary } from '../../utils/uploadMedia';
+import { uploadMediaToStorage } from '../../utils/uploadMedia';
 
 const CATEGORIES = [
   { label: 'Road Repair', icon: 'construct-outline' },
@@ -105,7 +104,7 @@ export default function SubmitTaskScreen({ navigation }) {
         const item = media[i];
         const type = item.type === 'video' ? 'video' : 'image';
         try {
-          const url  = await uploadMediaToCloudinary(item.uri, type);
+          const url  = await uploadMediaToStorage(item.uri, type);
           console.log('handleSubmit: upload result', url);
           mediaUrls.push({ url, type });
         } catch (uploadErr) {
@@ -114,9 +113,9 @@ export default function SubmitTaskScreen({ navigation }) {
         }
       }
 
-      // 2 — save to Firestore
+      // 2 — save to Supabase
       setStatusText('Saving task…');
-      console.log('Attempting to save to Firestore...');
+      console.log('Attempting to save to Supabase...');
       console.log('Media upload complete:', mediaUrls);
       if (!user) {
         console.error('No authenticated user found; aborting submit on web.');
@@ -125,7 +124,7 @@ export default function SubmitTaskScreen({ navigation }) {
         setStatusText('');
         return;
       }
-      console.log('User:', user?.uid);
+      console.log('User:', user?.id);
       console.log('UserProfile:', userProfile);
       console.log('Task data:', {
         title: title.trim(),
@@ -133,41 +132,40 @@ export default function SubmitTaskScreen({ navigation }) {
         category,
         location: location.trim(),
         mediaUrls,
-        submittedBy: user?.uid,
+        submittedBy: user?.id,
       });
-      
-      console.log('handleSubmit: calling addDoc to Firestore');
-      try {
-        const docRef = await addDoc(collection(db, 'tasks'), {
-          title:           title.trim(),
-          description:     description.trim(),
-          category,
-          location:        location.trim(),
-          coordinates:     coordinates || null,
-          media:           mediaUrls,
-          needsMaterials,
-          materials:       needsMaterials ? selectedMaterials : [],
-          needsGovernment,
-          estimatedPeople: estimatedPeople || 'Not specified',
-          submittedBy:     user?.uid,
-          submittedByName: userProfile?.fullName || 'Anonymous',
-          sector:          userProfile?.sector  || 'Unknown',
-          status:          'open',
-          participants:    [],
-          createdAt:       serverTimestamp(),
-        });
-        
-        console.log('✅ Task saved with ID:', docRef.id);
 
-        Alert.alert('✅ Success!', 'Your task has been submitted successfully.', [
-          { text: 'OK', onPress: () => navigation.goBack() },
-        ]);
-      } catch (firestoreError) {
-        console.error('❌ Firestore save error:', firestoreError);
-        console.error('Error code:', firestoreError.code);
-        console.error('Error message:', firestoreError.message);
-        throw firestoreError;
+      console.log('handleSubmit: inserting into Supabase');
+      const { data: newTask, error: insertError } = await supabase
+        .from('tasks')
+        .insert({
+          title:             title.trim(),
+          description:       description.trim(),
+          category,
+          location:          location.trim(),
+          coordinates:       coordinates || null,
+          media:             mediaUrls,
+          needs_materials:   needsMaterials,
+          materials:         needsMaterials ? selectedMaterials : [],
+          needs_government:  needsGovernment,
+          estimated_people:  estimatedPeople || 'Not specified',
+          submitted_by:      user?.id,
+          submitted_by_name: userProfile?.full_name || 'Anonymous',
+          sector:            userProfile?.sector || 'Unknown',
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('❌ Supabase save error:', insertError);
+        throw insertError;
       }
+
+      console.log('✅ Task saved with ID:', newTask.id);
+
+      Alert.alert('✅ Success!', 'Your task has been submitted successfully.', [
+        { text: 'OK', onPress: () => navigation.goBack() },
+      ]);
     } catch (err) {
       console.error('❌ SUBMISSION ERROR:', err);
       console.error('Error type:', err.name);

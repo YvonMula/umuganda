@@ -1,18 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
-import { collection, doc, getDocs, updateDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
 
@@ -29,10 +28,10 @@ export default function ManageUsersScreen() {
 
   const fetchUsers = async () => {
     try {
-      const snap = await getDocs(collection(db, 'users'));
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setUsers(data);
-      setFiltered(data);
+      const { data, error } = await supabase.from('profiles').select('*');
+      if (error) throw error;
+      setUsers(data || []);
+      setFiltered(data || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -45,7 +44,7 @@ export default function ManageUsersScreen() {
   useEffect(() => {
     if (search) {
       setFiltered(users.filter(u =>
-        u.fullName?.toLowerCase().includes(search.toLowerCase()) ||
+        u.full_name?.toLowerCase().includes(search.toLowerCase()) ||
         u.email?.toLowerCase().includes(search.toLowerCase()) ||
         u.sector?.toLowerCase().includes(search.toLowerCase())
       ));
@@ -55,10 +54,14 @@ export default function ManageUsersScreen() {
   }, [search, users]);
 
   const changeRole = async (userId, newRole) => {
-    if (userId === user.uid) return Alert.alert('Error', 'You cannot change your own role.');
+    if (userId === user.id) return Alert.alert('Error', 'You cannot change your own role.');
     setUpdating(true);
     try {
-      await updateDoc(doc(db, 'users', userId), { role: newRole });
+      const { error } = await supabase
+        .from('profiles')
+        .update({ role: newRole })
+        .eq('id', userId);
+      if (error) throw error;
       setUsers(prev => prev.map(u => u.id === userId ? { ...u, role: newRole } : u));
       setSelectedUser(prev => ({ ...prev, role: newRole }));
       Alert.alert('✅ Updated', `Role changed to ${newRole} successfully.`);
@@ -78,10 +81,10 @@ export default function ManageUsersScreen() {
   const renderUser = ({ item }) => (
     <TouchableOpacity style={styles.userCard} onPress={() => setSelectedUser(item)}>
       <View style={[styles.avatar, { backgroundColor: getRoleColor(item.role) }]}>
-        <Text style={styles.avatarText}>{item.fullName?.charAt(0)?.toUpperCase()}</Text>
+        <Text style={styles.avatarText}>{item.full_name?.charAt(0)?.toUpperCase()}</Text>
       </View>
       <View style={{ flex: 1 }}>
-        <Text style={styles.userName}>{item.fullName}</Text>
+        <Text style={styles.userName}>{item.full_name}</Text>
         <Text style={styles.userEmail}>{item.email}</Text>
         <Text style={styles.userSector}>{item.sector}</Text>
       </View>

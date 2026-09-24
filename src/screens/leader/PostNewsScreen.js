@@ -1,18 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
-import { addDoc, collection, serverTimestamp } from 'firebase/firestore';
 import { useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView, Platform,
-    ScrollView,
-    StyleSheet,
-    Switch,
-    Text,
-    TextInput, TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView, Platform,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput, TouchableOpacity,
+  View
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
 
@@ -34,17 +33,17 @@ export default function PostNewsScreen({ navigation }) {
     setLoading(true); // ← disable button immediately on first tap
 
     try {
-      await addDoc(collection(db, 'news'), {
+      const { error } = await supabase.from('news').insert({
         title: title.trim(),
         content: content.trim(),
         category,
         pinned,
-        postedBy: user.uid,
-        postedByName: userProfile?.fullName || 'Leader',
+        posted_by: user.id,
+        posted_by_name: userProfile?.full_name || 'Leader',
         sector: userProfile?.sector || 'All Sectors',
         role: userProfile?.role || 'leader',
-        createdAt: serverTimestamp(),
       });
+      if (error) throw error;
 
       // ✅ Success confirmation
       Alert.alert(

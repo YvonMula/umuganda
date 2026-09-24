@@ -1,26 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import {
-    addDoc,
-    collection,
-    onSnapshot,
-    orderBy,
-    query,
-    serverTimestamp
-} from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    FlatList,
-    Modal,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Modal,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { SkeletonList } from '../../components/SkeletonLoader';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
@@ -40,16 +32,28 @@ export default function RoomsScreen({ navigation }) {
   const [creating, setCreating] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
+  const fetchRooms = async () => {
+    const { data, error } = await supabase
+      .from('rooms')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (!error) {
+      setRooms(data || []);
+      setFilteredRooms(data || []);
+    }
+    setLoading(false);
+    setRefreshing(false);
+  };
+
   useEffect(() => {
-    const q = query(collection(db, 'rooms'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setRooms(data);
-      setFilteredRooms(data);
-      setLoading(false);
-      setRefreshing(false);
-    });
-    return unsub;
+    fetchRooms();
+
+    const channel = supabase
+      .channel('rooms-list')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, fetchRooms)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   useEffect(() => {
@@ -70,19 +74,19 @@ export default function RoomsScreen({ navigation }) {
     if (!newRoomName.trim()) return Alert.alert('Error', 'Please enter a room name.');
     setCreating(true);
     try {
-      await addDoc(collection(db, 'rooms'), {
+      const { error } = await supabase.from('rooms').insert({
         name: newRoomName.trim(),
         description: newRoomDesc.trim() || 'Community discussion room',
-        createdBy: user.uid,
-        createdByName: userProfile?.fullName || 'Anonymous',
+        created_by: user.id,
+        created_by_name: userProfile?.full_name || 'Anonymous',
         sector: userProfile?.sector || 'General',
-        createdAt: serverTimestamp(),
-        lastMessage: 'Room created',
-        lastMessageAt: serverTimestamp(),
-        memberCount: 1,
-        iconIndex: Math.floor(Math.random() * ROOM_ICONS.length),
-        colorIndex: Math.floor(Math.random() * ROOM_COLORS.length),
+        last_message: 'Room created',
+        last_message_at: new Date().toISOString(),
+        member_count: 1,
+        icon_index: Math.floor(Math.random() * ROOM_ICONS.length),
+        color_index: Math.floor(Math.random() * ROOM_COLORS.length),
       });
+      if (error) throw error;
       setNewRoomName('');
       setNewRoomDesc('');
       setModalVisible(false);
@@ -94,8 +98,8 @@ export default function RoomsScreen({ navigation }) {
   };
 
   const renderRoom = ({ item }) => {
-    const iconName = ROOM_ICONS[item.iconIndex % ROOM_ICONS.length] || 'chatbubbles';
-    const color = ROOM_COLORS[item.colorIndex % ROOM_COLORS.length] || colors.primary;
+    const iconName = ROOM_ICONS[item.icon_index % ROOM_ICONS.length] || 'chatbubbles';
+    const color = ROOM_COLORS[item.color_index % ROOM_COLORS.length] || colors.primary;
 
     return (
       <TouchableOpacity
@@ -109,7 +113,7 @@ export default function RoomsScreen({ navigation }) {
           <Text style={styles.roomName}>{item.name}</Text>
           <Text style={styles.roomDesc} numberOfLines={1}>{item.description}</Text>
           <Text style={styles.lastMessage} numberOfLines={1}>
-            {item.lastMessage || 'No messages yet'}
+            {item.last_message || 'No messages yet'}
           </Text>
         </View>
         <View style={styles.roomMeta}>
@@ -177,7 +181,7 @@ export default function RoomsScreen({ navigation }) {
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
-            onRefresh={() => setRefreshing(true)}
+            onRefresh={() => { setRefreshing(true); fetchRooms(); }}
             colors={[colors.primary]}
           />
         }

@@ -1,19 +1,18 @@
 import { Ionicons } from '@expo/vector-icons';
-import { arrayRemove, arrayUnion, doc, onSnapshot, updateDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    Dimensions,
-    Linking,
-    Platform,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  Alert,
+  Dimensions,
+  Linking,
+  Platform,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import OptimizedImage from '../../components/OptimizedImage';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
@@ -25,23 +24,28 @@ export default function TaskDetailScreen({ route, navigation }) {
   const { task } = route.params;
   const { user } = useAuth();
   const [taskData, setTaskData]         = useState(task);
-  const [joined, setJoined]             = useState(task.participants?.includes(user?.uid));
+  const [joined, setJoined]             = useState(task.participants?.includes(user?.id));
   const [count, setCount]               = useState(task.participants?.length || 0);
   const [participating, setParticipating] = useState(false);
   const [activeSlide, setActiveSlide]   = useState(0);
 
   useEffect(() => {
-    const ref = doc(db, 'tasks', task.id);
-    const unsub = onSnapshot(ref, (snap) => {
-      if (!snap.exists()) return;
-      const data = { id: snap.id, ...snap.data() };
-      setTaskData(data);
-      setJoined(data.participants?.includes(user?.uid));
-      setCount(data.participants?.length || 0);
-    }, (err) => console.error('Task detail listener error:', err));
+    const channel = supabase
+      .channel(`task-detail-${task.id}`)
+      .on(
+        'postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'tasks', filter: `id=eq.${task.id}` },
+        (payload) => {
+          const data = payload.new;
+          setTaskData(data);
+          setJoined(data.participants?.includes(user?.id));
+          setCount(data.participants?.length || 0);
+        }
+      )
+      .subscribe();
 
-    return () => unsub();
-  }, [task.id, user?.uid]);
+    return () => supabase.removeChannel(channel);
+  }, [task.id, user?.id]);
 
   const media = taskData.media || [];
 
@@ -54,16 +58,20 @@ export default function TaskDetailScreen({ route, navigation }) {
   const handleParticipate = async () => {
     setParticipating(true);
     try {
-      const ref = doc(db, 'tasks', task.id);
-      if (joined) {
-        await updateDoc(ref, { participants: arrayRemove(user.uid) });
-        setJoined(false);
-        setCount(c => c - 1);
-      } else {
-        await updateDoc(ref, { participants: arrayUnion(user.uid) });
-        setJoined(true);
-        setCount(c => c + 1);
-      }
+      const currentParticipants = taskData.participants || [];
+      const newParticipants = joined
+        ? currentParticipants.filter((id) => id !== user.id)
+        : [...currentParticipants, user.id];
+
+      const { error } = await supabase
+        .from('tasks')
+        .update({ participants: newParticipants })
+        .eq('id', task.id);
+
+      if (error) throw error;
+
+      setJoined(!joined);
+      setCount(newParticipants.length);
     } catch {
       Alert.alert('Error', 'Could not update participation.');
     } finally {
@@ -179,7 +187,7 @@ export default function TaskDetailScreen({ route, navigation }) {
             <Text style={[styles.badgeText, { color: colors.primary }]}>{taskData.category}</Text>
           </View>
 
-          {taskData.needsGovernment && (
+          {taskData.needs_government && (
             <View style={[styles.badge, { backgroundColor: colors.warning + '18' }]}>
               <Ionicons name="business-outline" size={12} color={colors.warning} />
               <Text style={[styles.badgeText, { color: colors.warning }]}>Gov. Required</Text>
@@ -216,7 +224,7 @@ export default function TaskDetailScreen({ route, navigation }) {
             </View>
             <View style={{ flex: 1 }}>
               <Text style={styles.infoLabel}>Submitted By</Text>
-              <Text style={styles.infoValue}>{taskData.submittedByName} · {taskData.sector}</Text>
+              <Text style={styles.infoValue}>{taskData.submitted_by_name} · {taskData.sector}</Text>
             </View>
           </View>
         </View>
@@ -231,7 +239,7 @@ export default function TaskDetailScreen({ route, navigation }) {
         </View>
 
         {/* Materials */}
-        {taskData.needsMaterials && taskData.materials?.length > 0 && (
+        {taskData.needs_materials && taskData.materials?.length > 0 && (
           <>
             <View style={styles.sectionHead}>
               <Ionicons name="construct-outline" size={17} color={colors.primary} />
@@ -262,13 +270,13 @@ export default function TaskDetailScreen({ route, navigation }) {
           <View style={styles.statSep} />
           <View style={styles.statItem}>
             <Ionicons name="person-add-outline" size={22} color={colors.secondary} />
-            <Text style={styles.statVal}>{taskData.estimatedPeople || 'N/A'}</Text>
+            <Text style={styles.statVal}>{taskData.estimated_people || 'N/A'}</Text>
             <Text style={styles.statLab}>Needed</Text>
           </View>
           <View style={styles.statSep} />
           <View style={styles.statItem}>
             <Ionicons name="construct-outline" size={22} color={colors.warning} />
-            <Text style={styles.statVal}>{taskData.needsMaterials ? 'Yes' : 'No'}</Text>
+            <Text style={styles.statVal}>{taskData.needs_materials ? 'Yes' : 'No'}</Text>
             <Text style={styles.statLab}>Materials</Text>
           </View>
         </View>

@@ -1,16 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
-import { collection, doc, getDocs, query, updateDoc } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator,
-    FlatList,
-    RefreshControl,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View,
+  ActivityIndicator,
+  FlatList,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
 
@@ -30,34 +29,20 @@ export default function NotificationsScreen({ navigation }) {
       setLoading(false);
       return;
     }
-    
+
     try {
-      console.log('Fetching notifications for user:', user.uid);
-      
-      // Fetch all notifications (filter client-side to avoid index issues)
-      const q = query(collection(db, 'notifications'));
-      const snapshot = await getDocs(q);
-      
-      console.log('Total notifications fetched:', snapshot.size);
-      
-      const notifs = snapshot.docs
-        .map(doc => ({
-          id: doc.id,
-          ...doc.data(),
-        }))
-        // Filter for this user only
-        .filter(notif => notif.userId === user.uid);
-      
-      console.log('Notifications for this user:', notifs.length);
-      
-      // Sort by createdAt descending
-      notifs.sort((a, b) => {
-        const dateA = a.createdAt?.toDate?.() || a.createdAt || 0;
-        const dateB = b.createdAt?.toDate?.() || b.createdAt || 0;
-        return dateB - dateA;
-      });
-      
-      setNotifications(notifs);
+      console.log('Fetching notifications for user:', user.id);
+
+      const { data, error } = await supabase
+        .from('notifications')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      console.log('Notifications for this user:', data?.length || 0);
+      setNotifications(data || []);
     } catch (err) {
       console.error('Error fetching notifications:', err);
       console.error('Error details:', err.message);
@@ -71,15 +56,17 @@ export default function NotificationsScreen({ navigation }) {
 
   const markAsRead = async (notifId) => {
     try {
-      await updateDoc(doc(db, 'notifications', notifId), {
-        read: true,
-      });
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .eq('id', notifId);
+      if (error) throw error;
       setNotifications(prev =>
         prev.map(n => n.id === notifId ? { ...n, read: true } : n)
       );
     } catch (err) {
       console.error('Error marking notification as read:', err);
-      // Still update UI even if Firestore fails
+      // Still update UI even if the write fails
       setNotifications(prev =>
         prev.map(n => n.id === notifId ? { ...n, read: true } : n)
       );
@@ -90,16 +77,16 @@ export default function NotificationsScreen({ navigation }) {
     try {
       const unread = notifications.filter(n => !n.read);
       if (unread.length === 0) return;
-      
-      await Promise.all(
-        unread.map(n =>
-          updateDoc(doc(db, 'notifications', n.id), { read: true })
-        )
-      );
+
+      const { error } = await supabase
+        .from('notifications')
+        .update({ read: true })
+        .in('id', unread.map(n => n.id));
+      if (error) throw error;
       setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     } catch (err) {
       console.error('Error marking all as read:', err);
-      // Still update UI even if Firestore fails
+      // Still update UI even if the write fails
       setNotifications(prev => prev.map(n => ({ ...n, read: true })));
     }
   };
@@ -140,7 +127,7 @@ export default function NotificationsScreen({ navigation }) {
   const renderNotification = ({ item }) => {
     const icon = getNotificationIcon(item.type);
     const color = getNotificationColor(item.type);
-    const timeAgo = getTimeAgo(item.createdAt);
+    const timeAgo = getTimeAgo(item.created_at);
 
     return (
       <TouchableOpacity
@@ -148,9 +135,9 @@ export default function NotificationsScreen({ navigation }) {
         onPress={() => {
           if (!item.read) markAsRead(item.id);
           // Navigate based on notification type
-          if (item.taskId) {
-            navigation.navigate('TaskDetail', { taskId: item.taskId });
-          } else if (item.newsId) {
+          if (item.task_id) {
+            navigation.navigate('TaskDetail', { taskId: item.task_id });
+          } else if (item.news_id) {
             navigation.navigate('News');
           }
         }}
