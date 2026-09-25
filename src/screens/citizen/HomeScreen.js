@@ -16,6 +16,7 @@
  */
 
 import { Ionicons } from '@expo/vector-icons';
+import * as Location from 'expo-location';
 import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -29,6 +30,17 @@ import {
 import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
+
+// Distance between two lat/lng points, in kilometers (haversine formula)
+const getDistanceKm = (lat1, lon1, lat2, lon2) => {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
 
 /**
  * HomeScreen Component
@@ -44,24 +56,33 @@ export default function HomeScreen({ navigation }) {
   const [stats, setStats] = useState({ total: 0, open: 0, inProgress: 0, done: 0 });  // Task statistics
   const [loading, setLoading] = useState(true);                // Loading state
   const [refreshing, setRefreshing] = useState(false);         // Pull-to-refresh state
-  const [unreadCount, setUnreadCount] = useState(0);          // Unread notification count
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [userLocation, setUserLocation] = useState(null);
+
+  // Get the device's current position once, so tasks can be sorted nearest-first.
+  // If permission is denied or it fails, we silently fall back to newest-first.
+  useEffect(() => {
+    (async () => {
+      try {
+        const { status } = await Location.requestForegroundPermissionsAsync();
+        if (status !== 'granted') return;
+        const loc = await Location.getCurrentPositionAsync({});
+        setUserLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude });
+      } catch (err) {
+        console.error('HomeScreen location error:', err);
+      }
+    })();
+  }, []);          // Unread notification count
 
   /**
    * Fetch recent tasks (last 5) and overall stats, then keep them live
    * via a Supabase realtime channel on the 'tasks' table.
    */
   const fetchTasksData = async () => {
-    const { data: recent, error: recentError } = await supabase
-      .from('tasks')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(5);
-    if (recentError) console.error('Recent tasks fetch error:', recentError);
-    else setRecentTasks(recent || []);
+    const { data: all, error } = await supabase.from('tasks').select('*');
 
-    const { data: all, error: allError } = await supabase.from('tasks').select('status');
-    if (allError) {
-      console.error('All tasks fetch error:', allError);
+    if (error) {
+      console.error('Tasks fetch error:', error);
     } else {
       setStats({
         total: all.length,
@@ -69,6 +90,24 @@ export default function HomeScreen({ navigation }) {
         inProgress: all.filter(t => t.status === 'in-progress').length,
         done: all.filter(t => t.status === 'done').length,
       });
+
+      let sorted;
+      if (userLocation) {
+        // Nearest first — tasks with no coordinates sort to the end
+        sorted = [...all].sort((a, b) => {
+          const distA = a.coordinates?.lat != null
+            ? getDistanceKm(userLocation.lat, userLocation.lng, a.coordinates.lat, a.coordinates.lng)
+            : Infinity;
+          const distB = b.coordinates?.lat != null
+            ? getDistanceKm(userLocation.lat, userLocation.lng, b.coordinates.lat, b.coordinates.lng)
+            : Infinity;
+          return distA - distB;
+        });
+      } else {
+        // No location yet (permission denied or still loading) — fall back to newest first
+        sorted = [...all].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      }
+      setRecentTasks(sorted.slice(0, 5));
     }
 
     setLoading(false);
@@ -84,7 +123,7 @@ export default function HomeScreen({ navigation }) {
       .subscribe();
 
     return () => supabase.removeChannel(tasksChannel);
-  }, []);
+  }, [userLocation]);
 
   /**
    * Fetch and keep live the count of this user's unread notifications.
@@ -256,9 +295,9 @@ export default function HomeScreen({ navigation }) {
         ))}
       </View>
 
-      {/* Recent Tasks */}
+      {/* Nearest Tasks */}
       <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Recent Tasks</Text>
+        <Text style={styles.sectionTitle}>{userLocation ? 'Nearest Tasks' : 'Recent Tasks'}</Text>
         <TouchableOpacity onPress={() => navigation.navigate('Tasks')}>
           <Text style={styles.seeAll}>See All</Text>
         </TouchableOpacity>
@@ -290,6 +329,9 @@ export default function HomeScreen({ navigation }) {
               <Text style={styles.taskTitle} numberOfLines={1}>{task.title}</Text>
               <Text style={styles.taskLocation} numberOfLines={1}>
                 <Ionicons name="location" size={12} color={colors.textLight} /> {task.location}
+                {userLocation && task.coordinates?.lat != null && (
+                  `  ·  ${getDistanceKm(userLocation.lat, userLocation.lng, task.coordinates.lat, task.coordinates.lng).toFixed(1)} km away`
+                )}
               </Text>
               <View style={styles.taskMeta}>
                 <View style={[styles.statusBadge, { backgroundColor: getStatusColor(task.status) + '20' }]}>

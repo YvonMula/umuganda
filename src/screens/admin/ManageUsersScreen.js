@@ -1,15 +1,15 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
-  Alert,
-  FlatList,
-  Modal,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View
+    ActivityIndicator,
+    Alert,
+    FlatList,
+    Modal,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from 'react-native';
 import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
@@ -148,9 +148,9 @@ export default function ManageUsersScreen() {
               <>
                 <View style={styles.modalUserHeader}>
                   <View style={[styles.modalAvatar, { backgroundColor: getRoleColor(selectedUser.role) }]}>
-                    <Text style={styles.modalAvatarText}>{selectedUser.fullName?.charAt(0)?.toUpperCase()}</Text>
+                    <Text style={styles.modalAvatarText}>{selectedUser.full_name?.charAt(0)?.toUpperCase()}</Text>
                   </View>
-                  <Text style={styles.modalUserName}>{selectedUser.fullName}</Text>
+                  <Text style={styles.modalUserName}>{selectedUser.full_name}</Text>
                   <Text style={styles.modalUserEmail}>{selectedUser.email}</Text>
                   <Text style={styles.modalUserSector}>{selectedUser.sector} Sector</Text>
                 </View>
@@ -187,7 +187,7 @@ export default function ManageUsersScreen() {
                   <View style={styles.infoRow}>
                     <Ionicons name="calendar-outline" size={16} color={colors.mediumGray} />
                     <Text style={styles.infoText}>
-                      Joined {new Date(selectedUser.createdAt).toLocaleDateString()}
+                      Joined {new Date(selectedUser.created_at).toLocaleDateString()}
                     </Text>
                   </View>
                 </View>

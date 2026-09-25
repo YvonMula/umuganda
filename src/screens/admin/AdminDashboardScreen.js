@@ -1,15 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import { collection, getDocs } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator, RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator, RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
 
@@ -26,15 +25,21 @@ export default function AdminDashboardScreen({ navigation }) {
 
   const fetchStats = async () => {
     try {
-      const [usersSnap, tasksSnap, roomsSnap, newsSnap] = await Promise.all([
-        getDocs(collection(db, 'users')),
-        getDocs(collection(db, 'tasks')),
-        getDocs(collection(db, 'rooms')),
-        getDocs(collection(db, 'news')),
+      const [
+        { data: users, error: usersError },
+        { data: tasks, error: tasksError },
+        { count: totalRooms, error: roomsError },
+        { count: totalNews, error: newsError },
+      ] = await Promise.all([
+        supabase.from('profiles').select('*'),
+        supabase.from('tasks').select('status'),
+        supabase.from('rooms').select('*', { count: 'exact', head: true }),
+        supabase.from('news').select('*', { count: 'exact', head: true }),
       ]);
 
-      const users = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-      const tasks = tasksSnap.docs.map(d => d.data());
+      if (usersError || tasksError || roomsError || newsError) {
+        throw usersError || tasksError || roomsError || newsError;
+      }
 
       setStats({
         totalUsers: users.length,
@@ -43,11 +48,16 @@ export default function AdminDashboardScreen({ navigation }) {
         totalTasks: tasks.length,
         openTasks: tasks.filter(t => t.status === 'open').length,
         doneTasks: tasks.filter(t => t.status === 'done').length,
-        totalRooms: roomsSnap.size,
-        totalNews: newsSnap.size,
+        totalRooms: totalRooms || 0,
+        totalNews: totalNews || 0,
       });
 
-      setRecentUsers(users.slice(0, 5));
+      const { data: recent } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      setRecentUsers(recent || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -75,7 +85,7 @@ export default function AdminDashboardScreen({ navigation }) {
       <View style={styles.header}>
         <View>
           <Text style={styles.greeting}>Admin Panel ⚙️</Text>
-          <Text style={styles.subGreeting}>Welcome, {userProfile?.fullName}</Text>
+          <Text style={styles.subGreeting}>Welcome, {userProfile?.full_name}</Text>
         </View>
         <View style={styles.adminBadge}>
           <Ionicons name="shield-checkmark" size={20} color={colors.white} />
@@ -164,10 +174,10 @@ export default function AdminDashboardScreen({ navigation }) {
         {recentUsers.map((u, i) => (
           <View key={u.id} style={[styles.userRow, i < recentUsers.length - 1 && styles.userRowBorder]}>
             <View style={styles.userAvatar}>
-              <Text style={styles.userAvatarText}>{u.fullName?.charAt(0)?.toUpperCase()}</Text>
+              <Text style={styles.userAvatarText}>{u.full_name?.charAt(0)?.toUpperCase()}</Text>
             </View>
             <View style={{ flex: 1 }}>
-              <Text style={styles.userName}>{u.fullName}</Text>
+              <Text style={styles.userName}>{u.full_name}</Text>
               <Text style={styles.userSector}>{u.sector}</Text>
             </View>
             <View style={[styles.roleBadge, {

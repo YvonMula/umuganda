@@ -1,15 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
-import { collection, getDocs } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    ActivityIndicator, RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TouchableOpacity,
-    View
+  ActivityIndicator, RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
 
@@ -22,25 +21,25 @@ export default function LeaderDashboardScreen({ navigation }) {
 
   const fetchData = async () => {
     try {
-      const tasksSnap = await getDocs(collection(db, 'tasks'));
-      const all = tasksSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const { data: all, error } = await supabase.from('tasks').select('*');
+      if (error) throw error;
 
       const totalParticipants = all.reduce((sum, t) => sum + (t.participants?.length || 0), 0);
 
       setStats({
         tasks:        all.length,
         open:         all.filter(t => t.status === 'open').length,
-        govTasks:     all.filter(t => t.needsGovernment).length,
+        govTasks:     all.filter(t => t.needs_government).length,
         participants: totalParticipants,
       });
 
       // 5 most recent tasks
-      const sorted = [...all].sort((a, b) => {
-        const aTime = a.createdAt?.seconds || 0;
-        const bTime = b.createdAt?.seconds || 0;
-        return bTime - aTime;
-      });
-      setRecentTasks(sorted.slice(0, 5));
+      const { data: recent } = await supabase
+        .from('tasks')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      setRecentTasks(recent || []);
     } catch (err) {
       console.error(err);
     } finally {
@@ -81,7 +80,7 @@ export default function LeaderDashboardScreen({ navigation }) {
             <Ionicons name="grid" size={22} color={colors.white} />
             <Text style={styles.greeting}>Leader Dashboard</Text>
           </View>
-          <Text style={styles.sub}>Welcome, {userProfile?.fullName?.split(' ')[0]}</Text>
+          <Text style={styles.sub}>Welcome, {userProfile?.full_name?.split(' ')[0]}</Text>
           <Text style={styles.sector}>{userProfile?.sector} Sector</Text>
         </View>
         <View style={styles.shieldBadge}>
@@ -159,7 +158,7 @@ export default function LeaderDashboardScreen({ navigation }) {
               <Text style={styles.taskLocation} numberOfLines={1}>
                 <Ionicons name="location" size={12} color={colors.textLight} /> {task.location}
               </Text>
-              <Text style={styles.taskSubmitter}>By {task.submittedByName} · {task.sector}</Text>
+              <Text style={styles.taskSubmitter}>By {task.submitted_by_name} · {task.sector}</Text>
             </View>
             <View style={{ alignItems: 'flex-end', gap: 6 }}>
               <View style={[styles.statusBadge, { backgroundColor: statusColor(task.status) + '20' }]}>
@@ -167,7 +166,7 @@ export default function LeaderDashboardScreen({ navigation }) {
                   {task.status?.toUpperCase()}
                 </Text>
               </View>
-              {task.needsGovernment && (
+              {task.needs_government && (
                 <View style={styles.govBadge}>
                   <Ionicons name="business" size={11} color={colors.warning} />
                   <Text style={styles.govBadgeText}>Gov</Text>

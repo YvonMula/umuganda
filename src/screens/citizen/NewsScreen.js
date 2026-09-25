@@ -1,18 +1,17 @@
 import { Ionicons } from '@expo/vector-icons';
-import { collection, onSnapshot, orderBy, query } from 'firebase/firestore';
 import { useEffect, useState } from 'react';
 import {
-    FlatList,
-    Modal,
-    RefreshControl,
-    ScrollView,
-    StyleSheet,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View
+  FlatList,
+  Modal,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View
 } from 'react-native';
-import { db } from '../../../firebase';
+import { supabase } from '../../../supabase';
 import { SkeletonList } from '../../components/SkeletonLoader';
 import colors from '../../theme/colors';
 
@@ -34,16 +33,28 @@ export default function NewsScreen({ navigation }) {
   const [selectedPost, setSelectedPost] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
 
+  const fetchNews = async () => {
+    const { data, error } = await supabase
+      .from('news')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (!error) {
+      setPosts(data || []);
+      setFiltered(data || []);
+    }
+    setLoading(false);
+    setRefreshing(false);
+  };
+
   useEffect(() => {
-    const q = query(collection(db, 'news'), orderBy('createdAt', 'desc'));
-    const unsub = onSnapshot(q, (snap) => {
-      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setPosts(data);
-      setFiltered(data);
-      setLoading(false);
-      setRefreshing(false);
-    });
-    return unsub;
+    fetchNews();
+
+    const channel = supabase
+      .channel('news-list')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'news' }, fetchNews)
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
   }, []);
 
   useEffect(() => {
@@ -69,7 +80,7 @@ export default function NewsScreen({ navigation }) {
 
   const formatDate = (timestamp) => {
     if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const date = new Date(timestamp);
     return date.toLocaleDateString('en-RW', {
       day: 'numeric', month: 'short', year: 'numeric',
     });
@@ -94,7 +105,7 @@ export default function NewsScreen({ navigation }) {
             <Ionicons name={catStyle.icon} size={13} color={catStyle.color} />
             <Text style={[styles.catText, { color: catStyle.color }]}>{item.category}</Text>
           </View>
-          <Text style={styles.dateText}>{formatDate(item.createdAt)}</Text>
+          <Text style={styles.dateText}>{formatDate(item.created_at)}</Text>
         </View>
         <Text style={styles.cardTitle}>{item.title}</Text>
         <Text style={styles.cardExcerpt} numberOfLines={2}>{item.content}</Text>
@@ -102,11 +113,11 @@ export default function NewsScreen({ navigation }) {
           <View style={styles.authorRow}>
             <View style={styles.authorAvatar}>
               <Text style={styles.authorInitial}>
-                {item.postedByName?.charAt(0)?.toUpperCase() || 'A'}
+                {item.posted_by_name?.charAt(0)?.toUpperCase() || 'A'}
               </Text>
             </View>
             <View>
-              <Text style={styles.authorName}>{item.postedByName || 'Admin'}</Text>
+              <Text style={styles.authorName}>{item.posted_by_name || 'Admin'}</Text>
               <Text style={styles.authorSector}>{item.sector || 'All Sectors'}</Text>
             </View>
           </View>
@@ -190,7 +201,7 @@ export default function NewsScreen({ navigation }) {
         renderItem={renderPost}
         contentContainerStyle={{ padding: 16, paddingBottom: 80 }}
         refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={() => setRefreshing(true)} colors={[colors.primary]} />
+          <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); fetchNews(); }} colors={[colors.primary]} />
         }
         ListEmptyComponent={
           <View style={styles.empty}>
@@ -225,13 +236,13 @@ export default function NewsScreen({ navigation }) {
                   <View style={styles.authorRow}>
                     <View style={styles.authorAvatar}>
                       <Text style={styles.authorInitial}>
-                        {selectedPost.postedByName?.charAt(0)?.toUpperCase() || 'A'}
+                        {selectedPost.posted_by_name?.charAt(0)?.toUpperCase() || 'A'}
                       </Text>
                     </View>
                     <View>
-                      <Text style={styles.authorName}>{selectedPost.postedByName || 'Admin'}</Text>
+                      <Text style={styles.authorName}>{selectedPost.posted_by_name || 'Admin'}</Text>
                       <Text style={styles.authorSector}>
-                        {selectedPost.sector || 'All Sectors'} · {formatDate(selectedPost.createdAt)}
+                        {selectedPost.sector || 'All Sectors'} · {formatDate(selectedPost.created_at)}
                       </Text>
                     </View>
                   </View>
