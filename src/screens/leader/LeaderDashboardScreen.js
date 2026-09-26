@@ -16,13 +16,31 @@ export default function LeaderDashboardScreen({ navigation }) {
   const { userProfile } = useAuth();
   const [stats, setStats] = useState({ tasks: 0, open: 0, govTasks: 0, participants: 0 });
   const [recentTasks, setRecentTasks] = useState([]);
+  const [hotspots, setHotspots] = useState([]);
+  const [umugandaImpact, setUmugandaImpact] = useState({ umuganda: null, other: null });
+  const [participationTrend, setParticipationTrend] = useState([]);
+  const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const fetchData = async () => {
     try {
-      const { data: all, error } = await supabase.from('tasks').select('*');
-      if (error) throw error;
+      const mySector = userProfile?.sector;
+
+      const [
+        { data: all, error },
+        { data: hotspotData, error: hotspotError },
+        { data: impactData, error: impactError },
+        { data: trendData, error: trendError },
+      ] = await Promise.all([
+        supabase.from('tasks').select('*').eq('sector', mySector),
+        supabase.from('cell_hotspots').select('*').eq('sector', mySector).order('open_count', { ascending: false }).limit(5),
+        supabase.from('umuganda_impact').select('*'),
+        supabase.from('monthly_submitters').select('*').order('month', { ascending: true }).limit(6),
+      ]);
+      if (error || hotspotError || impactError || trendError) {
+        throw error || hotspotError || impactError || trendError;
+      }
 
       const totalParticipants = all.reduce((sum, t) => sum + (t.participants?.length || 0), 0);
 
@@ -33,13 +51,23 @@ export default function LeaderDashboardScreen({ navigation }) {
         participants: totalParticipants,
       });
 
-      // 5 most recent tasks
-      const { data: recent } = await supabase
+      // 5 most recent tasks in this leader's sector
+      const sorted = [...all].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+      setRecentTasks(sorted.slice(0, 5));
+
+      setHotspots(hotspotData || []);
+      setUmugandaImpact({
+        umuganda: (impactData || []).find(r => r.is_umuganda_week)?.avg_completions_per_week ?? null,
+        other: (impactData || []).find(r => !r.is_umuganda_week)?.avg_completions_per_week ?? null,
+      });
+      setParticipationTrend(trendData || []);
+
+      const { count: pendingTotal } = await supabase
         .from('tasks')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(5);
-      setRecentTasks(recent || []);
+        .select('*', { count: 'exact', head: true })
+        .eq('sector', mySector)
+        .in('status', ['pending', 'pending_completion']);
+      setPendingCount(pendingTotal || 0);
     } catch (err) {
       console.error(err);
     } finally {
@@ -48,7 +76,9 @@ export default function LeaderDashboardScreen({ navigation }) {
     }
   };
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    if (userProfile?.sector) fetchData();
+  }, [userProfile?.sector]);
 
   const getNextUmuganda = () => {
     const now = new Date();
@@ -101,6 +131,69 @@ export default function LeaderDashboardScreen({ navigation }) {
         <Text style={styles.bigNum}>{umuganda.days}</Text>
       </View>
 
+      {/* Hotspots in this sector */}
+      <Text style={styles.sectionTitle}>📍 Cell Hotspots in {userProfile?.sector}</Text>
+      <View style={styles.emptyCard2}>
+        {hotspots.length === 0 ? (
+          <Text style={styles.emptyText}>No open tasks in your sector yet.</Text>
+        ) : (
+          hotspots.map((h, i) => (
+            <View key={h.cell} style={[styles.hotspotRow, i < hotspots.length - 1 && styles.hotspotRowBorder]}>
+              <View style={[styles.hotspotRank, i === 0 && { backgroundColor: colors.danger }]}>
+                <Text style={styles.hotspotRankText}>{i + 1}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.taskTitle}>{h.cell}</Text>
+                <Text style={styles.taskLocation}>
+                  {h.avg_days_open != null ? `Avg. ${h.avg_days_open} day(s) open` : ''}
+                </Text>
+              </View>
+              <Text style={styles.hotspotCount}>{h.open_count} open</Text>
+            </View>
+          ))
+        )}
+      </View>
+
+      {/* Citywide context */}
+      <Text style={styles.sectionTitle}>📅 Umuganda-Day Impact (Citywide)</Text>
+      <View style={styles.statsRow}>
+        <View style={[styles.statCard, { borderTopColor: colors.primary }]}>
+          <Text style={[styles.statVal, { color: colors.primary }]}>
+            {umugandaImpact.umuganda != null ? umugandaImpact.umuganda : '—'}
+          </Text>
+          <Text style={styles.statLabel}>Avg./week{'\n'}(Umuganda weeks)</Text>
+        </View>
+        <View style={[styles.statCard, { borderTopColor: colors.textLight }]}>
+          <Text style={[styles.statVal, { color: colors.textLight }]}>
+            {umugandaImpact.other != null ? umugandaImpact.other : '—'}
+          </Text>
+          <Text style={styles.statLabel}>Avg./week{'\n'}(other weeks)</Text>
+        </View>
+      </View>
+
+      <Text style={styles.sectionTitle}>📈 Participation Trend (Citywide)</Text>
+      {participationTrend.length === 0 ? (
+        <View style={styles.emptyCard2}>
+          <Text style={styles.emptyText}>No submissions yet.</Text>
+        </View>
+      ) : (
+        <View style={[styles.emptyCard2, styles.trendRow]}>
+          {participationTrend.map((m) => {
+            const max = Math.max(...participationTrend.map(x => x.active_submitters), 1);
+            const barHeight = 8 + (m.active_submitters / max) * 60;
+            return (
+              <View key={m.month} style={styles.trendBarWrap}>
+                <View style={[styles.trendBar, { height: barHeight }]} />
+                <Text style={styles.trendLabel}>
+                  {new Date(m.month).toLocaleDateString('en', { month: 'short' })}
+                </Text>
+                <Text style={styles.trendValue}>{m.active_submitters}</Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
       {/* Stats */}
       <View style={styles.statsRow}>
         {[
@@ -123,6 +216,7 @@ export default function LeaderDashboardScreen({ navigation }) {
       <Text style={styles.sectionTitle}>Quick Actions</Text>
       <View style={styles.actionsGrid}>
         {[
+          { label: `Approvals${pendingCount ? ` (${pendingCount})` : ''}`, icon: 'checkmark-done', color: colors.danger, onPress: () => navigation.navigate('TaskApprovals') },
           { label: 'Post Announcement', icon: 'megaphone',  color: colors.primary,   onPress: () => navigation.navigate('PostNews') },
           { label: 'Browse Tasks',      icon: 'list',     color: colors.secondary, onPress: () => navigation.navigate('Tasks') },
           { label: 'Community Rooms',   icon: 'chatbubbles', color: '#6C63FF',       onPress: () => navigation.navigate('Rooms') },
@@ -269,4 +363,24 @@ const styles = StyleSheet.create({
     justifyContent: 'center', alignItems: 'center',
   },
   emptyText: { fontSize: 14, color: colors.textLight },
+  emptyCard2: {
+    marginHorizontal: 16, marginBottom: 4, backgroundColor: colors.white,
+    borderRadius: 14, elevation: 2, padding: 14,
+  },
+  hotspotRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 8 },
+  hotspotRowBorder: { borderBottomWidth: 1, borderBottomColor: colors.border },
+  hotspotRank: {
+    width: 26, height: 26, borderRadius: 13,
+    backgroundColor: colors.textLight, justifyContent: 'center', alignItems: 'center',
+  },
+  hotspotRankText: { color: colors.white, fontWeight: 'bold', fontSize: 12 },
+  hotspotCount: { fontSize: 12, fontWeight: 'bold', color: colors.danger },
+  trendRow: {
+    flexDirection: 'row', alignItems: 'flex-end',
+    justifyContent: 'space-around', height: 110,
+  },
+  trendBarWrap: { alignItems: 'center', gap: 4 },
+  trendBar: { width: 18, borderRadius: 4, backgroundColor: colors.primary },
+  trendLabel: { fontSize: 10, color: colors.textLight },
+  trendValue: { fontSize: 11, fontWeight: '600', color: colors.text },
 });

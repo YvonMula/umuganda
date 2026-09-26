@@ -10,6 +10,7 @@ import {
 import { supabase } from '../../../supabase';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
+import NotificationHelper from '../../utils/notificationHelper';
 import { uploadMediaToStorage } from '../../utils/uploadMedia';
 
 const CATEGORIES = [
@@ -163,7 +164,31 @@ export default function SubmitTaskScreen({ navigation }) {
 
       console.log('✅ Task saved with ID:', newTask.id);
 
-      Alert.alert('✅ Success!', 'Your task has been submitted successfully.', [
+      // Notify this sector's leader(s) that a task needs their review
+      try {
+        const { data: leaders } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('role', 'leader')
+          .eq('sector', userProfile?.sector || 'Unknown');
+        if (leaders?.length) {
+          await Promise.all(
+            leaders.map(l =>
+              NotificationHelper.notifyTaskSubmitted(
+                l.id,
+                userProfile?.full_name || 'A citizen',
+                title.trim(),
+                newTask.id
+              )
+            )
+          );
+        }
+      } catch (notifyErr) {
+        console.error('Failed to notify leader(s):', notifyErr);
+        // Non-fatal — the task itself was saved successfully either way
+      }
+
+      Alert.alert('✅ Submitted!', 'Your task has been submitted and is awaiting approval from your sector leader.', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch (err) {

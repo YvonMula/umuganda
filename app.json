@@ -14,9 +14,16 @@
       "supportsTablet": true
     },
     "android": {
+      "package": "com.yvonmulamba.umuganda",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/android-icon-foreground.png",
         "backgroundColor": "#00A651"
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "95103e12-8c99-44ee-9fb0-7131afc40fd4"
       }
     }
   }

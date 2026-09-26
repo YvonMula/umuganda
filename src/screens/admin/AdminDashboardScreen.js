@@ -20,6 +20,11 @@ export default function AdminDashboardScreen({ navigation }) {
     totalRooms: 0, totalNews: 0,
   });
   const [recentUsers, setRecentUsers] = useState([]);
+  const [hotspots, setHotspots] = useState([]);
+  const [umugandaImpact, setUmugandaImpact] = useState({ umuganda: null, other: null });
+  const [participationTrend, setParticipationTrend] = useState([]);
+  const [totalParticipants, setTotalParticipants] = useState(0);
+  const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
@@ -30,15 +35,23 @@ export default function AdminDashboardScreen({ navigation }) {
         { data: tasks, error: tasksError },
         { count: totalRooms, error: roomsError },
         { count: totalNews, error: newsError },
+        { data: hotspotData, error: hotspotError },
+        { data: impactData, error: impactError },
+        { data: trendData, error: trendError },
+        { data: totalPartData, error: totalPartError },
       ] = await Promise.all([
         supabase.from('profiles').select('*'),
         supabase.from('tasks').select('status'),
         supabase.from('rooms').select('*', { count: 'exact', head: true }),
         supabase.from('news').select('*', { count: 'exact', head: true }),
+        supabase.from('sector_hotspots').select('*').order('open_count', { ascending: false }).limit(5),
+        supabase.from('umuganda_impact').select('*'),
+        supabase.from('monthly_submitters').select('*').order('month', { ascending: true }).limit(6),
+        supabase.from('total_participants').select('*').single(),
       ]);
 
-      if (usersError || tasksError || roomsError || newsError) {
-        throw usersError || tasksError || roomsError || newsError;
+      if (usersError || tasksError || roomsError || newsError || hotspotError || impactError || trendError || totalPartError) {
+        throw usersError || tasksError || roomsError || newsError || hotspotError || impactError || trendError || totalPartError;
       }
 
       setStats({
@@ -52,12 +65,26 @@ export default function AdminDashboardScreen({ navigation }) {
         totalNews: totalNews || 0,
       });
 
+      setHotspots(hotspotData || []);
+      setUmugandaImpact({
+        umuganda: (impactData || []).find(r => r.is_umuganda_week)?.avg_completions_per_week ?? null,
+        other: (impactData || []).find(r => !r.is_umuganda_week)?.avg_completions_per_week ?? null,
+      });
+      setParticipationTrend(trendData || []);
+      setTotalParticipants(totalPartData?.total_unique_participants || 0);
+
       const { data: recent } = await supabase
         .from('profiles')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(5);
       setRecentUsers(recent || []);
+
+      const { count: pendingTotal } = await supabase
+        .from('tasks')
+        .select('*', { count: 'exact', head: true })
+        .in('status', ['pending', 'pending_completion']);
+      setPendingCount(pendingTotal || 0);
     } catch (err) {
       console.error(err);
     } finally {
@@ -90,6 +117,73 @@ export default function AdminDashboardScreen({ navigation }) {
         <View style={styles.adminBadge}>
           <Ionicons name="shield-checkmark" size={20} color={colors.white} />
         </View>
+      </View>
+
+      {/* Decision Support */}
+      <Text style={styles.sectionTitle}>📍 Hotspots — Where To Focus Next</Text>
+      <View style={styles.usersCard}>
+        {hotspots.length === 0 && (
+          <Text style={{ padding: 14, color: colors.textLight, fontSize: 13 }}>No open tasks yet.</Text>
+        )}
+        {hotspots.map((h, i) => (
+          <View key={h.sector} style={[styles.userRow, i < hotspots.length - 1 && styles.userRowBorder]}>
+            <View style={[styles.hotspotRank, i === 0 && { backgroundColor: colors.danger }]}>
+              <Text style={styles.hotspotRankText}>{i + 1}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.userName}>{h.sector}</Text>
+              <Text style={styles.userSector}>
+                {h.avg_days_open != null ? `Avg. ${h.avg_days_open} day(s) open` : ''}
+              </Text>
+            </View>
+            <View style={[styles.roleBadge, { backgroundColor: colors.danger + '20' }]}>
+              <Text style={[styles.roleText, { color: colors.danger }]}>{h.open_count} open</Text>
+            </View>
+          </View>
+        ))}
+      </View>
+
+      <Text style={styles.sectionTitle}>📅 Umuganda-Day Impact</Text>
+      <View style={styles.statsGrid}>
+        <View style={[styles.statCard, { borderLeftColor: colors.primary }]}>
+          <Text style={[styles.statValue, { color: colors.primary }]}>
+            {umugandaImpact.umuganda != null ? umugandaImpact.umuganda : '—'}
+          </Text>
+          <Text style={styles.statLabel}>Avg. completions/week{'\n'}(Umuganda weeks)</Text>
+        </View>
+        <View style={[styles.statCard, { borderLeftColor: colors.textLight }]}>
+          <Text style={[styles.statValue, { color: colors.textLight }]}>
+            {umugandaImpact.other != null ? umugandaImpact.other : '—'}
+          </Text>
+          <Text style={styles.statLabel}>Avg. completions/week{'\n'}(other weeks)</Text>
+        </View>
+      </View>
+
+      <Text style={styles.sectionTitle}>📈 Participation Trend</Text>
+      <View style={styles.usersCard}>
+        <View style={[styles.userRow, styles.userRowBorder]}>
+          <Text style={styles.userName}>Total unique participants</Text>
+          <Text style={[styles.statValue, { fontSize: 18, color: colors.primary }]}>{totalParticipants}</Text>
+        </View>
+        {participationTrend.length === 0 ? (
+          <Text style={{ padding: 14, color: colors.textLight, fontSize: 13 }}>No submissions yet.</Text>
+        ) : (
+          <View style={styles.trendRow}>
+            {participationTrend.map((m) => {
+              const max = Math.max(...participationTrend.map(x => x.active_submitters), 1);
+              const barHeight = 8 + (m.active_submitters / max) * 60;
+              return (
+                <View key={m.month} style={styles.trendBarWrap}>
+                  <View style={[styles.trendBar, { height: barHeight }]} />
+                  <Text style={styles.trendLabel}>
+                    {new Date(m.month).toLocaleDateString('en', { month: 'short' })}
+                  </Text>
+                  <Text style={styles.trendValue}>{m.active_submitters}</Text>
+                </View>
+              );
+            })}
+          </View>
+        )}
       </View>
 
       {/* User Stats */}
@@ -150,6 +244,7 @@ export default function AdminDashboardScreen({ navigation }) {
       <Text style={styles.sectionTitle}>⚡ Quick Actions</Text>
       <View style={styles.actionsGrid}>
         {[
+          { label: `Approvals${pendingCount ? ` (${pendingCount})` : ''}`, icon: 'checkmark-done', color: colors.danger, screen: 'TaskApprovals' },
           { label: 'Manage Users', icon: 'people', color: colors.primary, screen: 'Users' },
           { label: 'All Tasks', icon: 'list', color: colors.secondary, screen: 'Tasks' },
           { label: 'Post News', icon: 'megaphone', color: '#6C63FF', screen: 'PostNews' },
@@ -278,4 +373,17 @@ const styles = StyleSheet.create({
   userSector: { fontSize: 12, color: colors.textLight },
   roleBadge: { borderRadius: 6, paddingVertical: 3, paddingHorizontal: 10 },
   roleText: { fontSize: 11, fontWeight: 'bold' },
+  hotspotRank: {
+    width: 26, height: 26, borderRadius: 13,
+    backgroundColor: colors.textLight, justifyContent: 'center', alignItems: 'center',
+  },
+  hotspotRankText: { color: colors.white, fontWeight: 'bold', fontSize: 12 },
+  trendRow: {
+    flexDirection: 'row', alignItems: 'flex-end',
+    justifyContent: 'space-around', padding: 14, height: 110,
+  },
+  trendBarWrap: { alignItems: 'center', gap: 4 },
+  trendBar: { width: 18, borderRadius: 4, backgroundColor: colors.primary },
+  trendLabel: { fontSize: 10, color: colors.textLight },
+  trendValue: { fontSize: 11, fontWeight: '600', color: colors.text },
 });

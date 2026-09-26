@@ -16,6 +16,7 @@ import { supabase } from '../../../supabase';
 import OptimizedImage from '../../components/OptimizedImage';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
+import NotificationHelper from '../../utils/notificationHelper';
 
 const { width: SW } = Dimensions.get('window');
 const CAROUSEL_HEIGHT = SW * 0.75;
@@ -50,9 +51,42 @@ export default function TaskDetailScreen({ route, navigation }) {
   const media = taskData.media || [];
 
   const statusColor = (s) => {
-    if (s === 'open')        return colors.primary;
-    if (s === 'in-progress') return colors.warning;
-    return colors.success;
+    if (s === 'pending')            return colors.textLight;
+    if (s === 'open')               return colors.primary;
+    if (s === 'in-progress')        return colors.warning;
+    if (s === 'pending_completion') return '#6C63FF';
+    if (s === 'rejected')           return colors.danger;
+    return colors.success; // done
+  };
+
+  const [requestingCompletion, setRequestingCompletion] = useState(false);
+
+  const requestCompletion = async () => {
+    setRequestingCompletion(true);
+    try {
+      const { error } = await supabase
+        .from('tasks')
+        .update({ status: 'pending_completion' })
+        .eq('id', task.id);
+      if (error) throw error;
+
+      const { data: leaders } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('role', 'leader')
+        .eq('sector', taskData.sector);
+      if (leaders?.length) {
+        await Promise.all(
+          leaders.map(l => NotificationHelper.notifyCompletionRequested(l.id, taskData.title, task.id))
+        );
+      }
+
+      Alert.alert('Sent', 'Your leader will review and confirm completion.');
+    } catch (err) {
+      Alert.alert('Error', 'Could not request completion review.');
+    } finally {
+      setRequestingCompletion(false);
+    }
   };
 
   const handleParticipate = async () => {
@@ -286,28 +320,64 @@ export default function TaskDetailScreen({ route, navigation }) {
 
       {/* ── FOOTER BUTTON ── */}
       <View style={styles.footer}>
-        <TouchableOpacity
-          style={[styles.participateBtn, joined && styles.participateBtnRed]}
-          onPress={handleParticipate}
-          disabled={participating}
-          activeOpacity={0.85}
-        >
-          {participating ? (
-            <ActivityIndicator color={colors.white} />
-          ) : (
-            <>
-              <Ionicons
-                name={joined ? 'close-circle-outline' : 'hand-right-outline'}
-                size={20}
-                color={colors.white}
-                style={{ marginRight: 8 }}
-              />
-              <Text style={styles.participateBtnText}>
-                {joined ? 'Cancel Participation' : 'I Will Participate'}
-              </Text>
-            </>
-          )}
-        </TouchableOpacity>
+        {taskData.status === 'pending' ? (
+          <View style={[styles.participateBtn, { backgroundColor: colors.textLight }]}>
+            <Text style={styles.participateBtnText}>Awaiting Leader Approval</Text>
+          </View>
+        ) : taskData.status === 'rejected' ? (
+          <View style={[styles.participateBtn, { backgroundColor: colors.danger }]}>
+            <Text style={styles.participateBtnText}>
+              Rejected{taskData.rejection_reason ? `: ${taskData.rejection_reason}` : ''}
+            </Text>
+          </View>
+        ) : taskData.status === 'pending_completion' ? (
+          <View style={[styles.participateBtn, { backgroundColor: '#6C63FF' }]}>
+            <Text style={styles.participateBtnText}>Awaiting Completion Sign-off</Text>
+          </View>
+        ) : taskData.status === 'done' ? (
+          <View style={[styles.participateBtn, { backgroundColor: colors.success }]}>
+            <Text style={styles.participateBtnText}>✓ Completed</Text>
+          </View>
+        ) : (joined || taskData.submitted_by === user?.id) ? (
+          <TouchableOpacity
+            style={styles.participateBtn}
+            onPress={requestCompletion}
+            disabled={requestingCompletion}
+            activeOpacity={0.85}
+          >
+            {requestingCompletion ? (
+              <ActivityIndicator color={colors.white} />
+            ) : (
+              <>
+                <Ionicons name="checkmark-done-outline" size={20} color={colors.white} style={{ marginRight: 8 }} />
+                <Text style={styles.participateBtnText}>Mark as Complete</Text>
+              </>
+            )}
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            style={[styles.participateBtn, joined && styles.participateBtnRed]}
+            onPress={handleParticipate}
+            disabled={participating}
+            activeOpacity={0.85}
+          >
+            {participating ? (
+              <ActivityIndicator color={colors.white} />
+            ) : (
+              <>
+                <Ionicons
+                  name={joined ? 'close-circle-outline' : 'hand-right-outline'}
+                  size={20}
+                  color={colors.white}
+                  style={{ marginRight: 8 }}
+                />
+                <Text style={styles.participateBtnText}>
+                  {joined ? 'Cancel Participation' : 'I Will Participate'}
+                </Text>
+              </>
+            )}
+          </TouchableOpacity>
+        )}
       </View>
 
     </View>
