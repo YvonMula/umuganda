@@ -44,14 +44,14 @@ export const AuthProvider = ({ children }) => {
     return () => listener.subscription.unsubscribe();
   }, []);
 
-  const register = async (email, password, fullName, phone, sector) => {
-    // full_name/phone/sector land in the user's metadata, which the
+  const register = async (email, password, fullName, phone, sector, cell) => {
+    // full_name/phone/sector/cell land in the user's metadata, which the
     // handle_new_user trigger in schema.sql reads to create the profile row
     const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: { full_name: fullName, phone, sector },
+        data: { full_name: fullName, phone, sector, cell },
       },
     });
     if (error) throw error;

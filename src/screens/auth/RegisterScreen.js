@@ -1,27 +1,24 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useState } from 'react';
 import {
-    ActivityIndicator,
-    Alert,
-    KeyboardAvoidingView, Platform,
-    ScrollView,
-    StyleSheet,
-    Text, TextInput, TouchableOpacity,
-    View
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView, Platform,
+  ScrollView,
+  StyleSheet,
+  Text, TextInput, TouchableOpacity,
+  View
 } from 'react-native';
+import { KIGALI_SECTORS } from '../../constants/kigaliLocations';
 import { useAuth } from '../../context/AuthContext';
 import colors from '../../theme/colors';
-
-const SECTORS = [
-  'Gasabo', 'Kicukiro', 'Nyarugenge', 'Bugesera', 'Gatsibo',
-  'Kayonza', 'Kirehe', 'Ngoma', 'Nyagatare', 'Rwamagana',
-];
 
 export default function RegisterScreen({ navigation }) {
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
   const [sector, setSector] = useState('');
+  const [cell, setCell] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -41,7 +38,7 @@ export default function RegisterScreen({ navigation }) {
 
     setLoading(true);
     try {
-      await register(email.trim(), password, fullName, phone, sector);
+      await register(email.trim(), password, fullName, phone, sector, cell.trim());
       Alert.alert('Success', 'Registration successful!');
     } catch (err) {
       Alert.alert('Registration Failed', err.message);
@@ -119,7 +116,7 @@ export default function RegisterScreen({ navigation }) {
 
           {showDropdown && (
             <View style={styles.dropdown}>
-              {SECTORS.map((s) => (
+              {KIGALI_SECTORS.map((s) => (
                 <TouchableOpacity
                   key={s}
                   style={styles.dropdownItem}
@@ -133,6 +130,17 @@ export default function RegisterScreen({ navigation }) {
               ))}
             </View>
           )}
+
+          <View style={styles.inputContainer}>
+            <Ionicons name="pin-outline" size={20} color={colors.mediumGray} style={styles.inputIcon} />
+            <TextInput
+              style={styles.input}
+              placeholder="Cell / Akagari (optional)"
+              placeholderTextColor={colors.mediumGray}
+              value={cell}
+              onChangeText={setCell}
+            />
+          </View>
 
           <View style={styles.inputContainer}>
             <Ionicons name="lock-closed-outline" size={20} color={colors.mediumGray} style={styles.inputIcon} />
